@@ -9,21 +9,24 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 const (
-	BASE_URL          = "https://api.princeton.edu:443/student-app/1.0.1"
+	BASE_URL          = "https://api.princeton.edu:443/active-directory/1.0.5"
 	REFRESH_TOKEN_URL = "https://api.princeton.edu:443/token"
 )
 
 type CampusAPIHelper struct {
-	baseUrl     string
-	refreshUrl  string
-	keyName     string
-	secretName  string
-	accessToken string
-	cache       map[string]*http.Response
+	refreshUrl     string
+	consumerKey    string
+	consumerSecret string
+	accessToken    string
+	cond           *sync.Cond
+	// cache       map[string]*http.Response
 	// Route   	func() http.HandlerFunc
 }
 
@@ -31,25 +34,30 @@ type RefreshTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
-// func NewCampusAPIHelper(consumerKey string, consumerSecret string, baseUrl string, refreshUrl string) *CampusAPIHelper {
-// 	helper := &CampusAPIHelper{
-// 		baseUrl:    baseUrl,
-// 		refreshUrl: refreshUrl,
-// 		keyName:    consumerKey,
-// 		secretName: consumerSecret,
-// 	}
-// 	err := helper.refreshAccess()
-// 	if err != nil {
-// 		// DO ERROR HANDLING
-// 	}
+type Student struct {
+	UniversityId string `json:?universityid"`
+	UID          string `json:?uid"`
+	Name         string `json:?displayname"`
+	Email        string `json:?mail"`
+}
 
-// 	return helper
-// }
+func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl string) *CampusAPIHelper {
+	helper := &CampusAPIHelper{
+		refreshUrl:     refreshUrl,
+		consumerKey:    consumerKey,
+		consumerSecret: consumerSecret,
+		cond:           sync.NewCond(&sync.Mutex{}),
+	}
+	err := helper.refreshAccess()
+	if err != nil {
+		// DO ERROR HANDLING
+		// dont yell at me
+	}
+
+	return helper
+}
 
 func (s *CampusAPIHelper) refreshAccess() error {
-	consumerKey := os.Getenv(s.keyName)
-	consumerSecret := os.Getenv(s.secretName)
-
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
 	client := &http.Client{
@@ -59,7 +67,7 @@ func (s *CampusAPIHelper) refreshAccess() error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(consumerKey+":"+consumerSecret)))
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(s.consumerKey+":"+s.consumerSecret)))
 
 	response, err := client.Do(req)
 	if err != nil {
@@ -73,8 +81,8 @@ func (s *CampusAPIHelper) refreshAccess() error {
 		return err
 	}
 
-	var refreshResponse RefreshTokenResponse
-	err = json.Unmarshal(b, &refreshResponse)
+	refreshResponse := &RefreshTokenResponse{}
+	err = json.Unmarshal(b, refreshResponse)
 
 	if err != nil {
 		return err
@@ -85,10 +93,94 @@ func (s *CampusAPIHelper) refreshAccess() error {
 	return nil
 }
 
-func (s *CampusAPIHelper) Request(*http.Request) (*http.Response, error) {
-	return nil, nil
+func (s *CampusAPIHelper) Request(req *http.Request) (*http.Response, error) {
+
+	// IF THE HTTP REQUEST FAILS
+	// 1. try to get the lock (with TryLock)
+	// 2a. you GOT the lock, so refresh the token and the unlock
+	// 2b. you DID NOT get the lock. wait for the lock to be released and, once it is, immediatly grab and release it
+	// 3. make the initial request again, now with a fresh access token
+	c := &http.Client{
+		Timeout: time.Second * 10, // my default timeout
+	}
+
+	req.Header.Set("Authorization", "Bearer "+s.accessToken)
+
+	res, err := c.Do(req)
+	if res.StatusCode == http.StatusUnauthorized {
+		fmt.Println("Authorization is stale")
+		err = s.refreshAccess()
+		if err != nil {
+			fmt.Println("Error 1")
+			// http.Error(w, "Unable to refresh access token.", http.StatusBadRequest)
+			return res, err
+		}
+
+		fmt.Println("GOT TO THIS PART OF REFRESH")
+
+		req.Header.Set("Authorization", "Bearer "+s.accessToken)
+		res, err = c.Do(req)
+		if err != nil {
+			fmt.Println("Error 2")
+			// http.Error(w, "Unable to retrieve menu data.", http.StatusBadRequest)
+			return res, err
+		}
+	}
+	if err != nil {
+		fmt.Println("Errored when sending request to the server")
+		return res, err
+	}
+
+	return res, err
+	// remember must close body !! should we make the client do this?
 }
 
 func main() {
-	fmt.Println("HELLO WORLD")
+	godotenv.Load(".env.local")
+
+	consumerKey := os.Getenv("CONSUMER_KEY")
+	consumerSecret := os.Getenv("CONSUMER_SECRET")
+
+	testHelper := NewCampusAPIHelper(consumerKey, consumerSecret, REFRESH_TOKEN_URL)
+
+	req, err := http.NewRequest(http.MethodGet, BASE_URL+"/users/basic?uid=liame", nil)
+	if err != nil {
+		fmt.Printf("client: could not create request: %s\n", err)
+	}
+
+	res, err := testHelper.Request(req)
+	if err != nil {
+		fmt.Printf("client: could not execute request: %s\n", err)
+	}
+
+	dec := json.NewDecoder(res.Body)
+	var s []Student
+	err = dec.Decode(&s)
+	if err != nil {
+		fmt.Printf("client: could not decode json response body: %s\n", err)
+	}
+
+	fmt.Printf("%#v \n", s)
+
+	res.Body.Close()
+
+	time.Sleep(10 * time.Second)
+
+	req, err = http.NewRequest(http.MethodGet, BASE_URL+"/users/basic?uid=hvera", nil)
+	if err != nil {
+		fmt.Printf("client: could not create request: %s\n", err)
+	}
+
+	res, err = testHelper.Request(req)
+	if err != nil {
+		fmt.Printf("client: could not execute request: %s\n", err)
+	}
+
+	dec = json.NewDecoder(res.Body)
+	err = dec.Decode(&s)
+	if err != nil {
+		fmt.Printf("client: could not decode json response body: %s\n", err)
+	}
+
+	fmt.Printf("%#v \n", s)
 }
