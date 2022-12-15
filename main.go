@@ -25,7 +25,7 @@ type CampusAPIHelper struct {
 	consumerKey    string
 	consumerSecret string
 	accessToken    string
-	cond           *sync.Cond
+	lock           *sync.RWMutex
 	// cache       map[string]*http.Response
 	// Route   	func() http.HandlerFunc
 }
@@ -46,9 +46,9 @@ func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl st
 		refreshUrl:     refreshUrl,
 		consumerKey:    consumerKey,
 		consumerSecret: consumerSecret,
-		cond:           sync.NewCond(&sync.Mutex{}),
+		lock:           &sync.RWMutex{},
 	}
-	err := helper.refreshAccess()
+	err := helper.refreshAccess(0)
 	if err != nil {
 		// DO ERROR HANDLING
 		// dont yell at me
@@ -57,7 +57,20 @@ func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl st
 	return helper
 }
 
-func (s *CampusAPIHelper) refreshAccess() error {
+func (s *CampusAPIHelper) refreshAccess(i int) error {
+	gotLock := s.lock.TryLock()
+	if !gotLock {
+		fmt.Printf("DID NOT GET LOCK %v \n", i)
+		s.lock.Lock()
+		s.lock.Unlock()
+		fmt.Printf("RETURNED TO ORIGINAL REQUEST WITH NEW TOKEN %v \n", i)
+		return nil
+	}
+
+	fmt.Println("REFRESHING STARTED")
+
+	defer s.lock.Unlock()
+
 	data := url.Values{}
 	data.Set("grant_type", "client_credentials")
 	client := &http.Client{
@@ -88,12 +101,15 @@ func (s *CampusAPIHelper) refreshAccess() error {
 		return err
 	}
 
-	fmt.Println("got new access token: " + refreshResponse.AccessToken)
+	// fmt.Println("got new access token: " + refreshResponse.AccessToken)
 	s.accessToken = refreshResponse.AccessToken
+
+	fmt.Println("REFRESHING FINISHED")
+
 	return nil
 }
 
-func (s *CampusAPIHelper) Request(req *http.Request) (*http.Response, error) {
+func (s *CampusAPIHelper) Do(req *http.Request) (*http.Response, error) {
 
 	// IF THE HTTP REQUEST FAILS
 	// 1. try to get the lock (with TryLock)
@@ -104,12 +120,15 @@ func (s *CampusAPIHelper) Request(req *http.Request) (*http.Response, error) {
 		Timeout: time.Second * 10, // my default timeout
 	}
 
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
 	req.Header.Set("Authorization", "Bearer "+s.accessToken)
 
 	res, err := c.Do(req)
 	if res.StatusCode == http.StatusUnauthorized {
 		fmt.Println("Authorization is stale")
-		err = s.refreshAccess()
+		err = s.refreshAccess(0)
 		if err != nil {
 			fmt.Println("Error 1")
 			// http.Error(w, "Unable to refresh access token.", http.StatusBadRequest)
@@ -143,12 +162,18 @@ func main() {
 
 	testHelper := NewCampusAPIHelper(consumerKey, consumerSecret, REFRESH_TOKEN_URL)
 
+	for i := 0; i < 15; i++ {
+		go func(i int) {
+			testHelper.refreshAccess(i)
+		}(i)
+	}
+
 	req, err := http.NewRequest(http.MethodGet, BASE_URL+"/users/basic?uid=liame", nil)
 	if err != nil {
 		fmt.Printf("client: could not create request: %s\n", err)
 	}
 
-	res, err := testHelper.Request(req)
+	res, err := testHelper.Do(req)
 	if err != nil {
 		fmt.Printf("client: could not execute request: %s\n", err)
 	}
@@ -171,7 +196,7 @@ func main() {
 		fmt.Printf("client: could not create request: %s\n", err)
 	}
 
-	res, err = testHelper.Request(req)
+	res, err = testHelper.Do(req)
 	if err != nil {
 		fmt.Printf("client: could not execute request: %s\n", err)
 	}
