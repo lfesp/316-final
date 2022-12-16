@@ -10,7 +10,6 @@ type Node struct {
 	next     *Node
 	key      string
 	value    []byte
-	birthday time.Time
 }
 
 // An LRU is a thread-sife, fixed-size in-memory cache with a least-recently-used eviction policy

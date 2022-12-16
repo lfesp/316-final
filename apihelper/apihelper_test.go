@@ -17,6 +17,7 @@ const (
 /*                                  Tests                                     */
 /******************************************************************************/
 
+// test the concurrency behavior of multiple concurrent access token regeneration attempts
 func TestRefresh(t *testing.T) {
 	godotenv.Load(".env.local")
 
@@ -27,8 +28,7 @@ func TestRefresh(t *testing.T) {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	// retrieves information for student netIDs
-	// intermediate 5 second lag enables observation of cache functionality
+
 	for i := 0; i < 15; i++ {
 		go func(helper *CampusAPIHelper, i int) {
 			helper.refreshAccessDebug(i)
