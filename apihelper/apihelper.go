@@ -15,8 +15,9 @@ import (
 	"sync"
 )
 
+// A CampusAPIHelper is a wrapper for an HTTP client interacting with Princeton's REST APIs
 type CampusAPIHelper struct {
-	refreshUrl     string
+	refreshUrl     string // URL to refresh the access token
 	consumerKey    string
 	consumerSecret string
 	accessToken    string
@@ -29,14 +30,14 @@ type refreshTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
-func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl string, client *http.Client) (*CampusAPIHelper, error) {
+func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl string, client *http.Client, cacheSize int) (*CampusAPIHelper, error) {
 	helper := &CampusAPIHelper{
 		refreshUrl:     refreshUrl,
 		consumerKey:    consumerKey,
 		consumerSecret: consumerSecret,
 		lock:           &sync.RWMutex{},
 		client:         client,
-		cache:          cache.NewLru(10000),
+		cache:          cache.NewLru(cacheSize),
 	}
 
 	if helper.client == nil {
@@ -51,6 +52,7 @@ func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl st
 	return helper, nil
 }
 
+// Refreshes the access token
 func (s *CampusAPIHelper) refreshAccess(i int) error {
 	gotLock := s.lock.TryLock()
 	if !gotLock {
@@ -100,13 +102,14 @@ func (s *CampusAPIHelper) refreshAccess(i int) error {
 	return nil
 }
 
-// IF THE HTTP REQUEST FAILS
-// 1. try to get the lock (with TryLock)
-// 2a. you GOT the lock, so refresh the token and the unlock
-// 2b. you DID NOT get the lock. wait for the lock to be released and, once it is, immediatly grab and release it
-// 3. make the initial request again, now with a fresh access token
-
+// Sends an HTTP request and returns an HTTP response
 func (s *CampusAPIHelper) Do(req *http.Request) (*http.Response, error) {
+	// If the HTTP Request fails:
+	//	 1. try to get the lock (with TryLock)
+	// 	 2a. you GOT the lock. refresh the token and then unlock
+	// 	 2b. you DID NOT get the lock. wait for the lock to be released and, once it is, immediatly grab and release it
+	// 	 3. make the initial request again, now with a fresh access token
+
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 
@@ -119,8 +122,6 @@ func (s *CampusAPIHelper) Do(req *http.Request) (*http.Response, error) {
 			return res, fmt.Errorf("error refreshing access token %v", err)
 		}
 
-		// fmt.Println("GOT TO THIS PART OF REFRESH")
-
 		req.Header.Set("Authorization", "Bearer "+s.accessToken)
 		res, err = s.client.Do(req)
 	}
@@ -128,6 +129,7 @@ func (s *CampusAPIHelper) Do(req *http.Request) (*http.Response, error) {
 	return res, err
 }
 
+// Issues a GET to the specified URL
 func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
@@ -144,6 +146,7 @@ func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 		return resp, nil
 	}
 
+	// Make new HTTP request if a cache miss
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -170,7 +173,7 @@ func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 	}
 
 	s.cache.Set(url, body)
-	//fmt.Println(s.cache.RemainingStorage())
+	// fmt.Println(s.cache.RemainingStorage())
 
 	return res, err
 }

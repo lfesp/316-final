@@ -13,9 +13,8 @@ type Node struct {
 	birthday time.Time
 }
 
-// An LRU is a fixed-size in-memory cache with least-recently-used eviction
+// An LRU is a thread-sife, fixed-size in-memory cache with a least-recently-used eviction policy
 type LRU struct {
-	// whatever fields you want here
 	m        sync.RWMutex
 	entries  map[string]*Node
 	head     *Node
@@ -38,11 +37,17 @@ func NewLru(limit int) *LRU {
 
 // MaxStorage returns the maximum number of bytes this LRU can store
 func (lru *LRU) MaxStorage() int {
+	lru.m.RLock()
+	defer lru.m.RUnlock()
+
 	return lru.capacity
 }
 
 // RemainingStorage returns the number of unused bytes available in this LRU
 func (lru *LRU) RemainingStorage() int {
+	lru.m.RLock()
+	defer lru.m.RUnlock()
+
 	return lru.capacity - lru.used
 }
 
@@ -128,12 +133,30 @@ func (lru *LRU) Set(key string, value []byte) bool {
 	item, ok := lru.entries[key]
 	if ok {
 		oldMemory := len(key) + len(item.value)
-		if memory > lru.RemainingStorage()+oldMemory {
+		if memory > lru.capacity - lru.used + oldMemory {
 			return false
 		}
-		lru.Remove(key)
+
+		// Remove the old key-value pair from the cache
+		if item == lru.head {
+			lru.head = item.prev
+		}
+		if item == lru.tail {
+			lru.tail = item.next
+		}
+		prev := item.prev
+		if item.prev != nil {
+			item.prev.next = item.next
+		}
+		if item.next != nil {
+			item.next.prev = prev
+		}
+		delete(lru.entries, key)
+		lru.used -= oldMemory
 	}
-	for memory > lru.RemainingStorage() {
+
+	// Evicting until enough memory is available
+	for memory > lru.capacity - lru.used {
 		tail := lru.tail
 		tailMemory := len(tail.key) +len(tail.value)
 		if tail.next != nil {
@@ -143,6 +166,8 @@ func (lru *LRU) Set(key string, value []byte) bool {
 		delete(lru.entries, tail.key)
 		lru.used -= tailMemory
 	}
+
+	// Adding new key-value pair
 	node := new(Node)
 	node.prev = lru.head
 	node.key = key
@@ -164,16 +189,16 @@ func (lru *LRU) Set(key string, value []byte) bool {
 
 // Len returns the number of bindings in the LRU.
 func (lru *LRU) Len() int {
-	lru.m.Lock()
-	defer lru.m.Unlock()
+	lru.m.RLock()
+	defer lru.m.RUnlock()
 
 	return len(lru.entries)
 }
 
 // Stats returns statistics about how many search hits and misses have occurred.
 func (lru *LRU) Stats() *Stats {
-	lru.m.Lock()
-	defer lru.m.Unlock()
+	lru.m.RLock()
+	defer lru.m.RUnlock()
 
 	return lru.stats
 }

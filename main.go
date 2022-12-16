@@ -28,7 +28,8 @@ type Student struct {
 
 var netids []string = []string{"liame", "hvera", "sc73", "mtouil", "shmeyer", "cjcheng", "adogra", "cabrooks", "juliacw", "aalevy", "nk5635"}
 
-func getStudentNoCache(apiHelper *apihelper.CampusAPIHelper) {
+// getStudentDo tests CampusAPIHelper's Do() method
+func getStudentDo(apiHelper *apihelper.CampusAPIHelper) {
 
 	netid := netids[rand.Intn(len(netids))]
 	req, err := http.NewRequest(http.MethodGet, BASE_URL+"/users/basic?uid="+netid, nil)
@@ -52,7 +53,8 @@ func getStudentNoCache(apiHelper *apihelper.CampusAPIHelper) {
 	fmt.Printf("%#v \n", s)
 }
 
-func getStudent(apiHelper *apihelper.CampusAPIHelper) {
+// getStudentGet tests CampusAPIHelper's Get() method, which utilizes an LRU cache
+func getStudentGet(apiHelper *apihelper.CampusAPIHelper) {
 
 	netid := netids[rand.Intn(len(netids))]
 
@@ -83,15 +85,24 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
+	// retrieves information for student netIDs
+	// intermediate 5 second lag enables observation of cache functionality
+	for i := 0; i < 15; i++ {
+		go func(helper *apihelper.CampusAPIHelper) {
+			getStudentGet(helper)
+		}(testHelper)
+	}
+
+	time.Sleep(5 * time.Second)
 
 	for i := 0; i < 15; i++ {
-		// getStudent(testHelper)
 		go func(helper *apihelper.CampusAPIHelper) {
-			getStudent(helper)
+			getStudentGet(helper)
 		}(testHelper)
 	}
 
 	time.Sleep(30 * time.Second)
+
 
 	// for i := 0; i < 15; i++ {
 	// 	go func(i int) {
