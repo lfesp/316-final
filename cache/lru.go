@@ -2,14 +2,13 @@ package cache
 
 import (
 	"sync"
-	"time"
 )
 
 type Node struct {
-	prev     *Node
-	next     *Node
-	key      string
-	value    []byte
+	prev  *Node
+	next  *Node
+	key   string
+	value []byte
 }
 
 // An LRU is a thread-sife, fixed-size in-memory cache with a least-recently-used eviction policy
@@ -132,7 +131,7 @@ func (lru *LRU) Set(key string, value []byte) bool {
 	item, ok := lru.entries[key]
 	if ok {
 		oldMemory := len(key) + len(item.value)
-		if memory > lru.capacity - lru.used + oldMemory {
+		if memory > lru.capacity-lru.used+oldMemory {
 			return false
 		}
 
@@ -155,9 +154,9 @@ func (lru *LRU) Set(key string, value []byte) bool {
 	}
 
 	// Evicting until enough memory is available
-	for memory > lru.capacity - lru.used {
+	for memory > lru.capacity-lru.used {
 		tail := lru.tail
-		tailMemory := len(tail.key) +len(tail.value)
+		tailMemory := len(tail.key) + len(tail.value)
 		if tail.next != nil {
 			tail.next.prev = nil
 		}
@@ -171,7 +170,6 @@ func (lru *LRU) Set(key string, value []byte) bool {
 	node.prev = lru.head
 	node.key = key
 	node.value = value
-	node.birthday = time.Now()
 	lru.entries[key] = node
 	if lru.head != nil {
 		lru.head.next = node
