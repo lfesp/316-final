@@ -126,8 +126,8 @@ func (s *CampusAPIHelper) Do(req *http.Request) (*http.Response, error) {
 }
 
 func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
 	value, found := s.cache.Get(url)
 
