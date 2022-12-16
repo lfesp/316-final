@@ -128,7 +128,7 @@ func (s *CampusAPIHelper) refreshAccessDebug(i int) error {
 		return nil
 	}
 
-	fmt.Printf("REFRESHING STARTED ON THREAD %v \n", i)
+	fmt.Printf("REFRESHING STARTED ON GOROUTINE %v \n", i)
 
 	defer s.lock.Unlock()
 
@@ -162,7 +162,7 @@ func (s *CampusAPIHelper) refreshAccessDebug(i int) error {
 
 	s.accessToken = refreshResponse.AccessToken
 
-	fmt.Printf("REFRESHING FINISHED ON THREAD %v \n", i)
+	fmt.Printf("REFRESHING FINISHED ON GOROUTINE %v \n", i)
 
 	return nil
 }
@@ -201,7 +201,7 @@ func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 		reader := bufio.NewReader(bytes.NewReader(value))
 		resp, err := http.ReadResponse(reader, nil)
 		if err != nil {
-			return nil, err
+			return resp, err
 		}
 		return resp, nil
 	}
@@ -266,4 +266,9 @@ func (s *CampusAPIHelper) Post(url, contentType string, body io.Reader) (*http.R
 // https://cs.opensource.google/go/go/+/refs/tags/go1.19.4:src/net/http/client.go;l=919
 func (s *CampusAPIHelper) PostForm(url string, data url.Values) (*http.Response, error) {
 	return s.Post(url, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+}
+
+// returns the cache's underlying Stats struct
+func (s *CampusAPIHelper) Stats() *cache.Stats {
+	return s.cache.Stats()
 }
