@@ -1,12 +1,15 @@
 package apihelper
 
 import (
+	"bufio"
+	"bytes"
 	"campus-api-helper/cache"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync"
@@ -33,7 +36,7 @@ func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl st
 		consumerSecret: consumerSecret,
 		lock:           &sync.RWMutex{},
 		client:         client,
-		cache:          cache.NewLru(100000),
+		cache:          cache.NewLru(10000),
 	}
 
 	if helper.client == nil {
@@ -126,14 +129,19 @@ func (s *CampusAPIHelper) Do(req *http.Request) (*http.Response, error) {
 }
 
 func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 
 	value, found := s.cache.Get(url)
 
 	if found {
 		fmt.Printf("cache hit!")
-		return value, nil
+		reader := bufio.NewReader(bytes.NewReader(value))
+		resp, err := http.ReadResponse(reader, nil)
+		if err != nil {
+			return nil, err
+		}
+		return resp, nil
 	}
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -155,7 +163,14 @@ func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 		res, err = s.client.Do(req)
 	}
 
-	s.cache.Set(url, *res)
+	body, err := httputil.DumpResponse(res, true)
+
+	if err != nil {
+		return nil, err
+	}
+
+	s.cache.Set(url, body)
+	//fmt.Println(s.cache.RemainingStorage())
 
 	return res, err
 }

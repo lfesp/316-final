@@ -1,8 +1,6 @@
 package cache
 
 import (
-	"net/http"
-	"reflect"
 	"sync"
 	"time"
 )
@@ -11,14 +9,14 @@ type Node struct {
 	prev     *Node
 	next     *Node
 	key      string
-	value    http.Response
+	value    []byte
 	birthday time.Time
 }
 
 // An LRU is a fixed-size in-memory cache with least-recently-used eviction
 type LRU struct {
 	// whatever fields you want here
-	m        *sync.RWMutex
+	m        sync.RWMutex
 	entries  map[string]*Node
 	head     *Node
 	tail     *Node
@@ -33,7 +31,7 @@ func NewLru(limit int) *LRU {
 		capacity: limit,
 		entries:  make(map[string]*Node),
 		stats:    new(Stats),
-		m:        &sync.RWMutex{},
+		m:        sync.RWMutex{},
 	}
 	return lru
 }
@@ -51,7 +49,7 @@ func (lru *LRU) RemainingStorage() int {
 // Get returns the value associated with the given key, if it exists.
 // This operation counts as a "use" for that key-value pair
 // ok is true if a value was found and false otherwise.
-func (lru *LRU) Get(key string) (value *http.Response, ok bool) {
+func (lru *LRU) Get(key string) (value []byte, ok bool) {
 	lru.m.Lock()
 	defer lru.m.Unlock()
 
@@ -61,7 +59,7 @@ func (lru *LRU) Get(key string) (value *http.Response, ok bool) {
 
 		// move node to head
 		if item == lru.head {
-			return &item.value, true
+			return item.value, true
 		}
 
 		if item == lru.tail {
@@ -81,7 +79,7 @@ func (lru *LRU) Get(key string) (value *http.Response, ok bool) {
 		item.prev = lru.head
 		lru.head = item
 
-		return &item.value, true
+		return item.value, true
 	}
 	lru.stats.Misses++
 	return nil, false
@@ -89,13 +87,13 @@ func (lru *LRU) Get(key string) (value *http.Response, ok bool) {
 
 // Remove removes and returns the value associated with the given key, if it exists.
 // ok is true if a value was found and false otherwise
-func (lru *LRU) Remove(key string) (value *http.Response, ok bool) {
+func (lru *LRU) Remove(key string) (value []byte, ok bool) {
 	lru.m.Lock()
 	defer lru.m.Unlock()
 
 	item, ok := lru.entries[key]
 	if ok {
-		memory := len(key) + int(reflect.TypeOf(item.value).Size())
+		memory := len(key) + len(item.value)
 		if item == lru.head {
 			lru.head = item.prev
 		}
@@ -112,24 +110,24 @@ func (lru *LRU) Remove(key string) (value *http.Response, ok bool) {
 		value := item.value
 		delete(lru.entries, key)
 		lru.used -= memory
-		return &value, true
+		return value, true
 	}
 	return nil, false
 }
 
 // Set associates the given value with the given key, possibly evicting values
 // to make room. Returns true if the binding was added successfully, else false.
-func (lru *LRU) Set(key string, value http.Response) bool {
+func (lru *LRU) Set(key string, value []byte) bool {
 	lru.m.Lock()
 	defer lru.m.Unlock()
 
-	memory := len(key) + int(reflect.TypeOf(value).Size())
+	memory := len(key) + len(value)
 	if memory > lru.capacity {
 		return false
 	}
 	item, ok := lru.entries[key]
 	if ok {
-		oldMemory := len(key) + int(reflect.TypeOf(item.value).Size())
+		oldMemory := len(key) + len(item.value)
 		if memory > lru.RemainingStorage()+oldMemory {
 			return false
 		}
@@ -137,7 +135,7 @@ func (lru *LRU) Set(key string, value http.Response) bool {
 	}
 	for memory > lru.RemainingStorage() {
 		tail := lru.tail
-		tailMemory := len(tail.key) + int(reflect.TypeOf(tail.value).Size())
+		tailMemory := len(tail.key) +len(tail.value)
 		if tail.next != nil {
 			tail.next.prev = nil
 		}
@@ -174,8 +172,8 @@ func (lru *LRU) Len() int {
 
 // Stats returns statistics about how many search hits and misses have occurred.
 func (lru *LRU) Stats() *Stats {
-	lru.m.RLock()
-	defer lru.m.RUnlock()
+	lru.m.Lock()
+	defer lru.m.Unlock()
 
 	return lru.stats
 }
