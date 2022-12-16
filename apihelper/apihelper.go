@@ -48,7 +48,7 @@ func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl st
 		helper.client = http.DefaultClient
 	}
 
-	err := helper.refreshAccess(0)
+	err := helper.refreshAccess()
 	if err != nil {
 		return nil, fmt.Errorf("error obtaining access token: %v", err)
 	}
@@ -57,7 +57,7 @@ func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl st
 }
 
 // refreshes the access token
-func (s *CampusAPIHelper) refreshAccess(i int) error {
+func (s *CampusAPIHelper) refreshAccess() error {
 	// CONCURRENCY LOGIC:
 	// If the HTTP Request fails:
 	//	 1. try to get the lock (with TryLock)
@@ -68,14 +68,10 @@ func (s *CampusAPIHelper) refreshAccess(i int) error {
 
 	gotLock := s.lock.TryLock()
 	if !gotLock {
-		// fmt.Printf("DID NOT GET LOCK %v \n", i)
 		s.lock.Lock()
 		s.lock.Unlock()
-		// fmt.Printf("RETURNED TO ORIGINAL REQUEST WITH NEW TOKEN %v \n", i)
 		return nil
 	}
-
-	// fmt.Println("REFRESHING STARTED")
 
 	defer s.lock.Unlock()
 
@@ -109,7 +105,64 @@ func (s *CampusAPIHelper) refreshAccess(i int) error {
 
 	s.accessToken = refreshResponse.AccessToken
 
-	// fmt.Println("REFRESHING FINISHED")
+	return nil
+}
+
+// helper method to check concurrency pattern in testing.
+// identical to refreshAccess(), but with print statements for debugging.
+func (s *CampusAPIHelper) refreshAccessDebug(i int) error {
+	// CONCURRENCY LOGIC:
+	// If the HTTP Request fails:
+	//	 1. try to get the lock (with TryLock)
+	// 	 2. case a - you GOT the lock. refresh the token and then unlock
+	// 		case b - you DID NOT get the lock. wait for the lock to be released (with Lock)
+	//				 and, once it is, immediately release it
+	// 	 3. make the initial request again, now with a fresh access token
+
+	gotLock := s.lock.TryLock()
+	if !gotLock {
+		fmt.Printf("DID NOT GET LOCK %v \n", i)
+		s.lock.Lock()
+		s.lock.Unlock()
+		fmt.Printf("RETURNED TO ORIGINAL REQUEST WITH NEW TOKEN %v \n", i)
+		return nil
+	}
+
+	fmt.Printf("REFRESHING STARTED ON THREAD %v \n", i)
+
+	defer s.lock.Unlock()
+
+	data := url.Values{}
+	data.Set("grant_type", "client_credentials")
+
+	req, err := http.NewRequest("POST", s.refreshUrl, strings.NewReader(data.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(s.consumerKey+":"+s.consumerSecret)))
+
+	response, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer response.Body.Close()
+
+	b, err := io.ReadAll(response.Body)
+	if err != nil {
+		return err
+	}
+
+	refreshResponse := &refreshTokenResponse{}
+	err = json.Unmarshal(b, refreshResponse)
+
+	if err != nil {
+		return err
+	}
+
+	s.accessToken = refreshResponse.AccessToken
+
+	fmt.Printf("REFRESHING FINISHED ON THREAD %v \n", i)
 
 	return nil
 }
@@ -123,7 +176,7 @@ func (s *CampusAPIHelper) Do(req *http.Request) (*http.Response, error) {
 
 	res, err := s.client.Do(req)
 	if res.StatusCode == http.StatusUnauthorized {
-		err = s.refreshAccess(0)
+		err = s.refreshAccess()
 		if err != nil {
 			return res, fmt.Errorf("error refreshing access token %v", err)
 		}
@@ -145,7 +198,6 @@ func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 	value, found := s.cache.Get(url)
 
 	if found {
-		fmt.Printf("cache hit!")
 		reader := bufio.NewReader(bytes.NewReader(value))
 		resp, err := http.ReadResponse(reader, nil)
 		if err != nil {
@@ -164,7 +216,7 @@ func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 
 	res, err := s.client.Do(req)
 	if res.StatusCode == http.StatusUnauthorized {
-		err = s.refreshAccess(0)
+		err = s.refreshAccess()
 		if err != nil {
 			return res, fmt.Errorf("error refreshing access token %v", err)
 		}
