@@ -1,6 +1,7 @@
 package main
 
 import (
+	"campus-api-helper/apihelper"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-	"campus-api-helper/apihelper"
 
 	"github.com/joho/godotenv"
 )
@@ -30,9 +30,9 @@ var netids []string = []string{"liame", "hvera", "sc73", "mtouil", "shmeyer", "c
 /******************************************************************************/
 
 // getStudentDo tests CampusAPIHelper's Do() method
-func getStudentDo(apiHelper *apihelper.CampusAPIHelper) {
+func getStudentDo(apiHelper *apihelper.CampusAPIHelper, i int) {
 
-	netid := netids[rand.Intn(len(netids))]
+	netid := netids[i]
 	req, err := http.NewRequest(http.MethodGet, BASE_URL+"/users/basic?uid="+netid, nil)
 	if err != nil {
 		fmt.Printf("client: could not create request: %s\n", err)
@@ -79,7 +79,7 @@ func getStudentGet(apiHelper *apihelper.CampusAPIHelper) {
 /*                             Example Code                                   */
 /******************************************************************************/
 
-// demonstrate our CampusAPIHelper.Do() method by making 15 concurrent 
+// demonstrate our CampusAPIHelper.Do() method by making 15 concurrent
 // HTTP requests to OIT's Active Directory API for student info
 func ShowcaseDo() {
 	godotenv.Load(".env.local")
@@ -94,10 +94,10 @@ func ShowcaseDo() {
 
 	// retrieves information for student netIDs
 	// intermediate 5 second lag enables observation of cache functionality
-	for i := 0; i < 15; i++ {
-		go func(helper *apihelper.CampusAPIHelper) {
-			getStudentDo(helper)
-		}(testHelper)
+	for i := 0; i < 11; i++ {
+		go func(helper *apihelper.CampusAPIHelper, i int) {
+			getStudentDo(helper, i)
+		}(testHelper, i)
 	}
 
 	time.Sleep(5 * time.Second)
@@ -106,16 +106,16 @@ func ShowcaseDo() {
 	fmt.Println()
 	time.Sleep(2 * time.Second)
 
-	for i := 0; i < 15; i++ {
-		go func(helper *apihelper.CampusAPIHelper) {
-			getStudentDo(helper)
-		}(testHelper)
+	for i := 0; i < 11; i++ {
+		go func(helper *apihelper.CampusAPIHelper, i int) {
+			getStudentDo(helper, i)
+		}(testHelper, i)
 	}
 
 	time.Sleep(5 * time.Second)
 }
 
-// demonstrate our CampusAPIHelper.Get() method by making 15 concurrent 
+// demonstrate our CampusAPIHelper.Get() method by making 15 concurrent
 // HTTP requests to OIT's Active Directory API for student info, with a
 // limited cache size of 100000 bytes, and logging the cache statistics
 func ShowcaseGet() {
@@ -154,7 +154,7 @@ func ShowcaseGet() {
 	fmt.Printf("LRU CACHE STATS: %+v \n", *testHelper.Stats())
 }
 
-// demonstrate our CampusAPIHelper.Get() method by making 15 concurrent 
+// demonstrate our CampusAPIHelper.Get() method by making 15 concurrent
 // HTTP requests to OIT's Active Directory API for student info, with a
 // limited cache size of 10000 bytes, and logging the cache statistics
 func ShowcaseEviction() {
