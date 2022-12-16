@@ -15,7 +15,9 @@ import (
 	"sync"
 )
 
-// A CampusAPIHelper is a wrapper for an HTTP client interacting with Princeton's REST APIs
+// CampusAPIHelper is a wrapper for an HTTP client
+// interacting with Princeton's REST APIs that
+// abstracts away the management of API access tokens.
 type CampusAPIHelper struct {
 	refreshUrl     string // URL to refresh the access token
 	consumerKey    string
@@ -26,10 +28,12 @@ type CampusAPIHelper struct {
 	cache          *cache.LRU
 }
 
+// helper struct for unmarshalling access token regeneration responses
 type refreshTokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
+// factory method that instantiates and returns a new CampusAPIHelper struct
 func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl string, client *http.Client, cacheSize int) (*CampusAPIHelper, error) {
 	helper := &CampusAPIHelper{
 		refreshUrl:     refreshUrl,
@@ -52,8 +56,16 @@ func NewCampusAPIHelper(consumerKey string, consumerSecret string, refreshUrl st
 	return helper, nil
 }
 
-// Refreshes the access token
+// refreshes the access token
 func (s *CampusAPIHelper) refreshAccess(i int) error {
+	// CONCURRENCY LOGIC:
+	// If the HTTP Request fails:
+	//	 1. try to get the lock (with TryLock)
+	// 	 2. case a - you GOT the lock. refresh the token and then unlock
+	// 		case b - you DID NOT get the lock. wait for the lock to be released (with Lock)
+	//				 and, once it is, immediately release it
+	// 	 3. make the initial request again, now with a fresh access token
+
 	gotLock := s.lock.TryLock()
 	if !gotLock {
 		// fmt.Printf("DID NOT GET LOCK %v \n", i)
@@ -102,14 +114,8 @@ func (s *CampusAPIHelper) refreshAccess(i int) error {
 	return nil
 }
 
-// Sends an HTTP request and returns an HTTP response
+// execute an HTTP request with API access token authentication
 func (s *CampusAPIHelper) Do(req *http.Request) (*http.Response, error) {
-	// If the HTTP Request fails:
-	//	 1. try to get the lock (with TryLock)
-	// 	 2a. you GOT the lock. refresh the token and then unlock
-	// 	 2b. you DID NOT get the lock. wait for the lock to be released and, once it is, immediatly grab and release it
-	// 	 3. make the initial request again, now with a fresh access token
-
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 
@@ -129,7 +135,9 @@ func (s *CampusAPIHelper) Do(req *http.Request) (*http.Response, error) {
 	return res, err
 }
 
-// Issues a GET to the specified URL
+// issues a GET to the specified URL and caches the result.
+// if the url results in a cache hit, no HTTP request is issued and the
+// cached response body is returned in a new response.
 func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
@@ -146,7 +154,7 @@ func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 		return resp, nil
 	}
 
-	// Make new HTTP request if a cache miss
+	// make new HTTP request if a cache miss
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -173,7 +181,37 @@ func (s *CampusAPIHelper) Get(url string) (*http.Response, error) {
 	}
 
 	s.cache.Set(url, body)
-	// fmt.Println(s.cache.RemainingStorage())
 
 	return res, err
+}
+
+// issues a HEAD to the specified URL
+// adapted from go http package source code:
+// https://cs.opensource.google/go/go/+/refs/tags/go1.19.4:src/net/http/client.go;l=919
+func (s *CampusAPIHelper) Head(url string) (*http.Response, error) {
+	req, err := http.NewRequest("HEAD", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	return s.Do(req)
+}
+
+// issues a POST to the specified URL
+// adapted from go http package source code:
+// https://cs.opensource.google/go/go/+/refs/tags/go1.19.4:src/net/http/client.go;l=919
+func (s *CampusAPIHelper) Post(url, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	return s.Do(req)
+}
+
+// issues a POST to the specified URL, with data's keys and
+// values URL-encoded as the request body.
+// adapted from go http package source code:
+// https://cs.opensource.google/go/go/+/refs/tags/go1.19.4:src/net/http/client.go;l=919
+func (s *CampusAPIHelper) PostForm(url string, data url.Values) (*http.Response, error) {
+	return s.Post(url, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
 }
